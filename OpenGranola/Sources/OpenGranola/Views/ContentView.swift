@@ -112,8 +112,12 @@ struct ContentView: View {
             return .handled
         }
         .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
-            if isRunning {
-                audioLevel = transcriptionEngine?.audioLevel ?? 0
+            guard let engine = transcriptionEngine else {
+                if audioLevel != 0 { audioLevel = 0 }
+                return
+            }
+            if engine.isRunning {
+                audioLevel = engine.audioLevel
             } else if audioLevel != 0 {
                 audioLevel = 0
             }
