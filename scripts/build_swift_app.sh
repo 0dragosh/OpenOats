@@ -43,6 +43,14 @@ mkdir -p "$APP_DIR/Contents/Frameworks"
 # Copy binary
 cp "$BINARY_PATH" "$APP_DIR/Contents/MacOS/OpenGranola"
 
+# Make the SwiftPM-built executable behave like a normal app bundle by
+# teaching dyld to search the app's embedded Frameworks directory.
+APP_BINARY="$APP_DIR/Contents/MacOS/OpenGranola"
+if ! otool -l "$APP_BINARY" | grep -Fq "@executable_path/../Frameworks"; then
+  install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_BINARY"
+  echo "Added app Frameworks rpath to executable"
+fi
+
 # Copy Info.plist
 cp "$SWIFT_DIR/Sources/OpenGranola/Info.plist" "$APP_DIR/Contents/Info.plist"
 
