@@ -45,6 +45,7 @@ final class TranscriptionEngine {
     /// Shared FluidAudio instances
     private var asrManager: AsrManager?
     private var qwen3Manager: Qwen3AsrManager?
+    private var openAITranscriptionClient: OpenAITranscriptionClient?
     private var vadManager: VadManager?
     private var currentTranscriptionModel: TranscriptionModel?
 
@@ -84,6 +85,17 @@ final class TranscriptionEngine {
             return
         }
 
+        if transcriptionModel == .customOpenAISTT {
+            if settings.customOpenAIApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                lastError = "Custom OpenAI API key is required for STT."
+                return
+            }
+            if settings.customOpenAITranscriptionModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                lastError = "Custom OpenAI STT model is required."
+                return
+            }
+        }
+
         guard await ensureMicrophonePermission() else { return }
 
         isRunning = true
@@ -116,6 +128,12 @@ final class TranscriptionEngine {
                 try await qwen3.loadModels(from: modelsDirectory)
                 self.qwen3Manager = qwen3
                 self.asrManager = nil
+                self.openAITranscriptionClient = nil
+            case .customOpenAISTT:
+                assetStatus = "Initializing \(transcriptionModel.displayName)..."
+                self.openAITranscriptionClient = OpenAITranscriptionClient()
+                self.asrManager = nil
+                self.qwen3Manager = nil
             }
 
             assetStatus = "Loading VAD model..."
@@ -441,6 +459,21 @@ final class TranscriptionEngine {
                 onPartial: onPartial,
                 onFinal: onFinal
             )
+        case .customOpenAISTT:
+            guard let openAITranscriptionClient else {
+                fatalError("Custom OpenAI STT requested without an initialized OpenAITranscriptionClient")
+            }
+            return StreamingTranscriber(
+                openAIClient: openAITranscriptionClient,
+                baseURL: settings.customOpenAIBaseURL,
+                apiKey: settings.customOpenAIApiKey,
+                model: settings.customOpenAITranscriptionModel,
+                locale: locale,
+                vadManager: vadManager,
+                speaker: speaker,
+                onPartial: onPartial,
+                onFinal: onFinal
+            )
         }
     }
 
@@ -475,6 +508,8 @@ final class TranscriptionEngine {
             )
         case .qwen3ASR06B:
             return !Qwen3AsrModels.modelsExist(at: Qwen3AsrModels.defaultCacheDirectory())
+        case .customOpenAISTT:
+            return false
         }
     }
 

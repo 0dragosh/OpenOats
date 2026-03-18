@@ -7,6 +7,7 @@ import CoreAudio
 enum LLMProvider: String, CaseIterable, Identifiable {
     case openRouter
     case ollama
+    case customOpenAI
 
     var id: String { rawValue }
 
@@ -14,6 +15,7 @@ enum LLMProvider: String, CaseIterable, Identifiable {
         switch self {
         case .openRouter: "OpenRouter"
         case .ollama: "Ollama"
+        case .customOpenAI: "Custom OpenAI API"
         }
     }
 }
@@ -22,6 +24,7 @@ enum TranscriptionModel: String, CaseIterable, Identifiable {
     case parakeetV2
     case parakeetV3
     case qwen3ASR06B
+    case customOpenAISTT
 
     var id: String { rawValue }
 
@@ -30,6 +33,7 @@ enum TranscriptionModel: String, CaseIterable, Identifiable {
         case .parakeetV2: "Parakeet TDT v2"
         case .parakeetV3: "Parakeet TDT v3"
         case .qwen3ASR06B: "Qwen3 ASR 0.6B"
+        case .customOpenAISTT: "Custom OpenAI STT"
         }
     }
 
@@ -39,6 +43,8 @@ enum TranscriptionModel: String, CaseIterable, Identifiable {
             "Transcription requires a one-time model download."
         case .qwen3ASR06B:
             "Qwen3 ASR requires a one-time model download."
+        case .customOpenAISTT:
+            "Custom OpenAI STT runs remotely and does not require local model download."
         }
     }
 }
@@ -89,6 +95,26 @@ final class AppSettings {
 
     var openRouterApiKey: String {
         didSet { KeychainHelper.save(key: "openRouterApiKey", value: openRouterApiKey) }
+    }
+
+    var customOpenAIBaseURL: String {
+        didSet { UserDefaults.standard.set(customOpenAIBaseURL, forKey: "customOpenAIBaseURL") }
+    }
+
+    var customOpenAIApiKey: String {
+        didSet { KeychainHelper.save(key: "customOpenAIApiKey", value: customOpenAIApiKey) }
+    }
+
+    var customOpenAICompletionModel: String {
+        didSet { UserDefaults.standard.set(customOpenAICompletionModel, forKey: "customOpenAICompletionModel") }
+    }
+
+    var customOpenAIEmbeddingModel: String {
+        didSet { UserDefaults.standard.set(customOpenAIEmbeddingModel, forKey: "customOpenAIEmbeddingModel") }
+    }
+
+    var customOpenAITranscriptionModel: String {
+        didSet { UserDefaults.standard.set(customOpenAITranscriptionModel, forKey: "customOpenAITranscriptionModel") }
     }
 
     var voyageApiKey: String {
@@ -159,6 +185,11 @@ final class AppSettings {
         ) ?? .parakeetV2
         self.inputDeviceID = AudioDeviceID(defaults.integer(forKey: "inputDeviceID"))
         self.openRouterApiKey = KeychainHelper.load(key: "openRouterApiKey") ?? ""
+        self.customOpenAIBaseURL = defaults.string(forKey: "customOpenAIBaseURL") ?? "https://api.openai.com"
+        self.customOpenAIApiKey = KeychainHelper.load(key: "customOpenAIApiKey") ?? ""
+        self.customOpenAICompletionModel = defaults.string(forKey: "customOpenAICompletionModel") ?? "gpt-4o-mini"
+        self.customOpenAIEmbeddingModel = defaults.string(forKey: "customOpenAIEmbeddingModel") ?? "text-embedding-3-small"
+        self.customOpenAITranscriptionModel = defaults.string(forKey: "customOpenAITranscriptionModel") ?? "gpt-4o-transcribe"
         self.voyageApiKey = KeychainHelper.load(key: "voyageApiKey") ?? ""
         self.llmProvider = LLMProvider(rawValue: defaults.string(forKey: "llmProvider") ?? "") ?? .openRouter
         self.embeddingProvider = EmbeddingProvider(rawValue: defaults.string(forKey: "embeddingProvider") ?? "") ?? .voyageAI
@@ -166,8 +197,8 @@ final class AppSettings {
         self.ollamaLLMModel = defaults.string(forKey: "ollamaLLMModel") ?? "qwen3:8b"
         self.ollamaEmbedModel = defaults.string(forKey: "ollamaEmbedModel") ?? "nomic-embed-text"
         self.openAIEmbedBaseURL = defaults.string(forKey: "openAIEmbedBaseURL") ?? "http://localhost:8080"
-        self.openAIEmbedApiKey = KeychainHelper.load(key: "openAIEmbedApiKey") ?? ""
-        self.openAIEmbedModel = defaults.string(forKey: "openAIEmbedModel") ?? "text-embedding-3-small"
+        self.openAIEmbedApiKey = KeychainHelper.load(key: "openAIEmbedApiKey") ?? self.customOpenAIApiKey
+        self.openAIEmbedModel = defaults.string(forKey: "openAIEmbedModel") ?? self.customOpenAIEmbeddingModel
         self.hasAcknowledgedRecordingConsent = defaults.bool(forKey: "hasAcknowledgedRecordingConsent")
 
         // Default to true (hidden) if key has never been set
@@ -245,7 +276,7 @@ final class AppSettings {
 
         // --- Migrate Keychain ---
         let oldService = "com.opengranola.app"
-        let keychainKeys = ["openRouterApiKey", "voyageApiKey"]
+        let keychainKeys = ["openRouterApiKey", "voyageApiKey", "customOpenAIApiKey"]
         for key in keychainKeys {
             if KeychainHelper.load(key: key) == nil,
                let oldValue = Self.loadKeychain(service: oldService, key: key) {
@@ -370,6 +401,7 @@ final class AppSettings {
         switch llmProvider {
         case .openRouter: raw = selectedModel
         case .ollama: raw = ollamaLLMModel
+        case .customOpenAI: raw = customOpenAICompletionModel
         }
         return raw.split(separator: "/").last.map(String.init) ?? raw
     }
