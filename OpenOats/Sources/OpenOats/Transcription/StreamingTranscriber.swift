@@ -8,6 +8,7 @@ final class StreamingTranscriber: @unchecked Sendable {
     private enum Backend: @unchecked Sendable {
         case parakeet(AsrManager)
         case qwen3(Qwen3AsrManager, Qwen3AsrConfig.Language?)
+        case openAICompatible(OpenAITranscriptionClient, baseURL: String, apiKey: String, model: String, language: String?)
     }
 
     private let backend: Backend
@@ -49,6 +50,31 @@ final class StreamingTranscriber: @unchecked Sendable {
         onFinal: @escaping @Sendable (String) -> Void
     ) {
         self.backend = .qwen3(qwen3Manager, qwenLanguage)
+        self.vadManager = vadManager
+        self.speaker = speaker
+        self.onPartial = onPartial
+        self.onFinal = onFinal
+    }
+
+    init(
+        openAIClient: OpenAITranscriptionClient,
+        baseURL: String,
+        apiKey: String,
+        model: String,
+        locale: Locale,
+        vadManager: VadManager,
+        speaker: Speaker,
+        onPartial: @escaping @Sendable (String) -> Void,
+        onFinal: @escaping @Sendable (String) -> Void
+    ) {
+        let language = locale.language.languageCode?.identifier
+        self.backend = .openAICompatible(
+            openAIClient,
+            baseURL: baseURL,
+            apiKey: apiKey,
+            model: model,
+            language: language
+        )
         self.vadManager = vadManager
         self.speaker = speaker
         self.onPartial = onPartial
@@ -171,6 +197,14 @@ final class StreamingTranscriber: @unchecked Sendable {
                     audioSamples: samples,
                     language: qwenLanguage,
                     maxNewTokens: 512
+                ).trimmingCharacters(in: .whitespacesAndNewlines)
+            case .openAICompatible(let client, let baseURL, let apiKey, let model, let language):
+                text = try await client.transcribe(
+                    samples: samples,
+                    baseURL: baseURL,
+                    apiKey: apiKey,
+                    model: model,
+                    language: language
                 ).trimmingCharacters(in: .whitespacesAndNewlines)
             }
             guard !text.isEmpty else { return }

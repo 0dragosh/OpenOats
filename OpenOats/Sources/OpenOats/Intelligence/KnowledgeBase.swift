@@ -404,7 +404,7 @@ final class KnowledgeBase {
         case .ollama:
             return "ollama|\(settings.ollamaBaseURL)|\(settings.ollamaEmbedModel)"
         case .openAICompatible:
-            return "openAI|\(settings.openAIEmbedBaseURL)|\(settings.openAIEmbedModel)"
+            return "openAI|\(settings.customOpenAIBaseURL)|\(settings.customOpenAIEmbeddingModel)"
         }
     }
 
@@ -428,9 +428,9 @@ final class KnowledgeBase {
         case .openAICompatible:
             return try await ollamaEmbedClient.embed(
                 texts: texts,
-                baseURL: settings.openAIEmbedBaseURL,
-                model: settings.openAIEmbedModel,
-                apiKey: settings.openAIEmbedApiKey
+                baseURL: settings.customOpenAIBaseURL,
+                model: settings.customOpenAIEmbeddingModel,
+                apiKey: settings.customOpenAIApiKey
             )
         }
     }

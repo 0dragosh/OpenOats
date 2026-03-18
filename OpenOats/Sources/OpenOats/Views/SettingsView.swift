@@ -74,11 +74,20 @@ struct SettingsView: View {
 
                     TextField("Model", text: $settings.selectedModel, prompt: Text("e.g. google/gemini-3-flash-preview"))
                         .font(.system(size: 12, design: .monospaced))
-                } else {
+                } else if settings.llmProvider == .ollama {
                     TextField("Ollama URL", text: $settings.ollamaBaseURL, prompt: Text("http://localhost:11434"))
                         .font(.system(size: 12, design: .monospaced))
 
                     TextField("Model", text: $settings.ollamaLLMModel, prompt: Text("e.g. qwen3:8b"))
+                        .font(.system(size: 12, design: .monospaced))
+                } else {
+                    TextField("Custom OpenAI URL", text: $settings.customOpenAIBaseURL, prompt: Text("https://api.openai.com"))
+                        .font(.system(size: 12, design: .monospaced))
+
+                    SecureField("Custom OpenAI API Key", text: $settings.customOpenAIApiKey)
+                        .font(.system(size: 12, design: .monospaced))
+
+                    TextField("Model", text: $settings.customOpenAICompletionModel, prompt: Text("e.g. gpt-4o-mini"))
                         .font(.system(size: 12, design: .monospaced))
                 }
             }
@@ -104,13 +113,19 @@ struct SettingsView: View {
                             .font(.system(size: 12, design: .monospaced))
                     }
                 case .openAICompatible:
-                    TextField("Endpoint URL", text: $settings.openAIEmbedBaseURL, prompt: Text("http://localhost:8080"))
-                        .font(.system(size: 12, design: .monospaced))
+                    if settings.llmProvider != .customOpenAI {
+                        TextField("Custom OpenAI URL", text: $settings.customOpenAIBaseURL, prompt: Text("https://api.openai.com"))
+                            .font(.system(size: 12, design: .monospaced))
 
-                    SecureField("API Key (optional)", text: $settings.openAIEmbedApiKey)
-                        .font(.system(size: 12, design: .monospaced))
+                        SecureField("Custom OpenAI API Key", text: $settings.customOpenAIApiKey)
+                            .font(.system(size: 12, design: .monospaced))
+                    } else {
+                        Text("Uses Custom OpenAI URL/API key from LLM Provider.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
 
-                    TextField("Model", text: $settings.openAIEmbedModel, prompt: Text("e.g. text-embedding-3-small"))
+                    TextField("Embedding Model", text: $settings.customOpenAIEmbeddingModel, prompt: Text("e.g. text-embedding-3-small"))
                         .font(.system(size: 12, design: .monospaced))
                 }
             }
@@ -135,6 +150,18 @@ struct SettingsView: View {
 
                 TextField("Locale (e.g. en-US)", text: $settings.transcriptionLocale)
                     .font(.system(size: 12, design: .monospaced))
+
+                if settings.transcriptionModel == .customOpenAISTT {
+                    if settings.llmProvider != .customOpenAI && settings.embeddingProvider != .openAICompatible {
+                        TextField("Custom OpenAI URL", text: $settings.customOpenAIBaseURL, prompt: Text("https://api.openai.com"))
+                            .font(.system(size: 12, design: .monospaced))
+                        SecureField("Custom OpenAI API Key", text: $settings.customOpenAIApiKey)
+                            .font(.system(size: 12, design: .monospaced))
+                    }
+
+                    TextField("STT Model", text: $settings.customOpenAITranscriptionModel, prompt: Text("e.g. gpt-4o-transcribe"))
+                        .font(.system(size: 12, design: .monospaced))
+                }
             }
 
             Section("Privacy") {

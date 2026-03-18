@@ -47,6 +47,7 @@ final class SuggestionEngine {
         switch settings.llmProvider {
         case .openRouter: settings.openRouterApiKey
         case .ollama: nil
+        case .customOpenAI: settings.customOpenAIApiKey
         }
     }
 
@@ -57,6 +58,9 @@ final class SuggestionEngine {
         case .ollama:
             let base = settings.ollamaBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             return URL(string: base + "/v1/chat/completions")
+        case .customOpenAI:
+            let base = settings.customOpenAIBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return URL(string: base + "/v1/chat/completions")
         }
     }
 
@@ -65,6 +69,7 @@ final class SuggestionEngine {
         switch settings.llmProvider {
         case .openRouter: settings.selectedModel
         case .ollama: settings.ollamaLLMModel
+        case .customOpenAI: settings.customOpenAICompletionModel
         }
     }
 
@@ -82,6 +87,8 @@ final class SuggestionEngine {
             guard !settings.openRouterApiKey.isEmpty else { return }
         case .ollama:
             break // No API key needed
+        case .customOpenAI:
+            guard !settings.customOpenAIApiKey.isEmpty else { return }
         }
 
         currentTask = Task {
