@@ -19,7 +19,7 @@ final class AppUpdaterController {
         do {
             try updater.start()
         } catch {
-            presentStartupError()
+            NSLog("Sparkle updater failed to start: \(error.localizedDescription)")
         }
     }
 

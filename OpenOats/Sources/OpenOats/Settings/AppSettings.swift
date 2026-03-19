@@ -262,10 +262,11 @@ final class AppSettings {
         ) ?? .parakeetV2
         self.inputDeviceID = AudioDeviceID(defaults.integer(forKey: "inputDeviceID"))
         let customOpenAIApiKey = KeychainHelper.load(key: "customOpenAIApiKey") ?? ""
+        let customOpenAIBaseURL = defaults.string(forKey: "customOpenAIBaseURL") ?? "https://api.openai.com"
         let customOpenAIEmbeddingModel = defaults.string(forKey: "customOpenAIEmbeddingModel") ?? "text-embedding-3-small"
 
         self.openRouterApiKey = KeychainHelper.load(key: "openRouterApiKey") ?? ""
-        self.customOpenAIBaseURL = defaults.string(forKey: "customOpenAIBaseURL") ?? "https://api.openai.com"
+        self.customOpenAIBaseURL = customOpenAIBaseURL
         self.customOpenAIApiKey = customOpenAIApiKey
         self.customOpenAICompletionModel = defaults.string(forKey: "customOpenAICompletionModel") ?? "gpt-4o-mini"
         self.customOpenAIEmbeddingModel = customOpenAIEmbeddingModel
@@ -282,8 +283,8 @@ final class AppSettings {
         self.openAIRerankEnabled = defaults.object(forKey: "openAIRerankEnabled") == nil
             ? false
             : defaults.bool(forKey: "openAIRerankEnabled")
-        self.openAIRerankBaseURL = defaults.string(forKey: "openAIRerankBaseURL") ?? self.customOpenAIBaseURL
-        self.openAIRerankApiKey = KeychainHelper.load(key: "openAIRerankApiKey") ?? self.customOpenAIApiKey
+        self.openAIRerankBaseURL = defaults.string(forKey: "openAIRerankBaseURL") ?? customOpenAIBaseURL
+        self.openAIRerankApiKey = KeychainHelper.load(key: "openAIRerankApiKey") ?? customOpenAIApiKey
         self.openAIRerankModel = defaults.string(forKey: "openAIRerankModel") ?? "gpt-4o-mini"
         self.ollamaBaseURL = defaults.string(forKey: "ollamaBaseURL") ?? "http://localhost:11434"
         self.ollamaLLMModel = defaults.string(forKey: "ollamaLLMModel") ?? "qwen3:8b"
