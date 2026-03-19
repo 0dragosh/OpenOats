@@ -314,14 +314,16 @@ final class AppSettings {
         guard !defaults.bool(forKey: migrationKey) else { return }
         defer { defaults.set(true, forKey: migrationKey) }
 
-        // Migrate UserDefaults from old bundle
         guard let oldDefaults = UserDefaults(suiteName: "com.onthespot.app") else { return }
 
         let keysToMigrate = [
-            "kbFolderPath", "selectedModel", "transcriptionLocale", "transcriptionModel", "inputDeviceID",
-            "llmProvider", "embeddingProvider", "ollamaBaseURL", "ollamaLLMModel",
-            "ollamaEmbedModel", "hideFromScreenShare",
-            "isTranscriptExpanded", "hasCompletedOnboarding"
+            "kbFolderPath", "notesFolderPath", "selectedModel", "transcriptionLocale", "transcriptionModel", "inputDeviceID",
+            "llmProvider", "embeddingProvider", "knowledgeBaseBackend",
+            "qdrantBaseURL", "qdrantCollection",
+            "openAIRerankEnabled", "openAIRerankBaseURL", "openAIRerankModel",
+            "ollamaBaseURL", "ollamaLLMModel", "ollamaEmbedModel",
+            "openAIEmbedBaseURL", "openAIEmbedModel",
+            "hideFromScreenShare", "isTranscriptExpanded", "hasCompletedOnboarding", "hasAcknowledgedRecordingConsent"
         ]
         for key in keysToMigrate {
             if let value = oldDefaults.object(forKey: key), defaults.object(forKey: key) == nil {
@@ -329,9 +331,8 @@ final class AppSettings {
             }
         }
 
-        // Migrate Keychain entries from old service
         let oldService = "com.onthespot.app"
-        let keychainKeys = ["openRouterApiKey", "voyageApiKey"]
+        let keychainKeys = ["openRouterApiKey", "voyageApiKey", "qdrantApiKey", "openAIRerankApiKey", "openAIEmbedApiKey"]
         for key in keychainKeys {
             if KeychainHelper.load(key: key) == nil,
                let oldValue = Self.loadKeychain(service: oldService, key: key) {
@@ -346,19 +347,19 @@ final class AppSettings {
         guard !defaults.bool(forKey: migrationKey) else { return }
         defer { defaults.set(true, forKey: migrationKey) }
 
-        // --- Migrate UserDefaults ---
         guard let oldDefaults = UserDefaults(suiteName: "com.opengranola.app") else {
-            // Even without old defaults, migrate file-backed state
             migrateFilesFromOpenGranola(defaults: defaults)
             return
         }
 
         let keysToMigrate = [
-            "kbFolderPath", "selectedModel", "transcriptionLocale", "transcriptionModel", "inputDeviceID",
-            "llmProvider", "embeddingProvider", "ollamaBaseURL", "ollamaLLMModel",
-            "ollamaEmbedModel", "hideFromScreenShare",
-            "isTranscriptExpanded", "hasCompletedOnboarding",
-            "hasAcknowledgedRecordingConsent"
+            "kbFolderPath", "notesFolderPath", "selectedModel", "transcriptionLocale", "transcriptionModel", "inputDeviceID",
+            "llmProvider", "embeddingProvider", "knowledgeBaseBackend",
+            "qdrantBaseURL", "qdrantCollection",
+            "openAIRerankEnabled", "openAIRerankBaseURL", "openAIRerankModel",
+            "ollamaBaseURL", "ollamaLLMModel", "ollamaEmbedModel",
+            "openAIEmbedBaseURL", "openAIEmbedModel",
+            "hideFromScreenShare", "isTranscriptExpanded", "hasCompletedOnboarding", "hasAcknowledgedRecordingConsent"
         ]
         for key in keysToMigrate {
             if let value = oldDefaults.object(forKey: key), defaults.object(forKey: key) == nil {
@@ -366,9 +367,8 @@ final class AppSettings {
             }
         }
 
-        // --- Migrate Keychain ---
         let oldService = "com.opengranola.app"
-        let keychainKeys = ["openRouterApiKey", "voyageApiKey", "customOpenAIApiKey"]
+        let keychainKeys = ["openRouterApiKey", "voyageApiKey", "customOpenAIApiKey", "qdrantApiKey", "openAIRerankApiKey", "openAIEmbedApiKey"]
         for key in keychainKeys {
             if KeychainHelper.load(key: key) == nil,
                let oldValue = Self.loadKeychain(service: oldService, key: key) {
@@ -376,7 +376,6 @@ final class AppSettings {
             }
         }
 
-        // --- Migrate file-backed state ---
         migrateFilesFromOpenGranola(defaults: defaults)
     }
 
@@ -391,25 +390,21 @@ final class AppSettings {
         let oldAppSupportDir = appSupport.appendingPathComponent("OpenGranola")
         let newAppSupportDir = appSupport.appendingPathComponent("OpenOats")
 
-        // Migrate Application Support: sessions/, templates.json, kb_cache.json
         if fm.fileExists(atPath: oldAppSupportDir.path) {
             try? fm.createDirectory(at: newAppSupportDir, withIntermediateDirectories: true)
 
-            // Sessions directory (JSONL files + sidecars)
             let oldSessions = oldAppSupportDir.appendingPathComponent("sessions")
             let newSessions = newAppSupportDir.appendingPathComponent("sessions")
             if fm.fileExists(atPath: oldSessions.path) && !fm.fileExists(atPath: newSessions.path) {
                 try? fm.moveItem(at: oldSessions, to: newSessions)
             }
 
-            // Templates
             let oldTemplates = oldAppSupportDir.appendingPathComponent("templates.json")
             let newTemplates = newAppSupportDir.appendingPathComponent("templates.json")
             if fm.fileExists(atPath: oldTemplates.path) && !fm.fileExists(atPath: newTemplates.path) {
                 try? fm.moveItem(at: oldTemplates, to: newTemplates)
             }
 
-            // KB embedding cache
             let oldCache = oldAppSupportDir.appendingPathComponent("kb_cache.json")
             let newCache = newAppSupportDir.appendingPathComponent("kb_cache.json")
             if fm.fileExists(atPath: oldCache.path) && !fm.fileExists(atPath: newCache.path) {
@@ -417,13 +412,9 @@ final class AppSettings {
             }
         }
 
-        // KB folder: leave unset by default. Only preserve an explicitly-set path
-        // that pointed at the old OpenGranola directory (user chose it themselves).
         let oldDocDir = home.appendingPathComponent("Documents/OpenGranola")
         let newDocDir = home.appendingPathComponent("Documents/OpenOats")
 
-        // Migrate notes folder: if the old default directory has content,
-        // use it as the notes folder so transcript archives stay accessible.
         if defaults.string(forKey: "notesFolderPath") == nil {
             if fm.fileExists(atPath: oldDocDir.path) {
                 let contents = (try? fm.contentsOfDirectory(atPath: oldDocDir.path)) ?? []
@@ -433,9 +424,6 @@ final class AppSettings {
             }
         }
 
-        // Migrate transcript archives: move files from ~/Documents/OpenGranola/
-        // into ~/Documents/OpenOats/ so new sessions and old archives coexist.
-        // Skip if the old dir is the active KB folder or notes folder (files stay in place).
         let activeKB = defaults.string(forKey: "kbFolderPath") ?? ""
         let activeNotes = defaults.string(forKey: "notesFolderPath") ?? ""
         if fm.fileExists(atPath: oldDocDir.path) && oldDocDir.path != activeKB && oldDocDir.path != activeNotes {
@@ -497,7 +485,6 @@ final class AppSettings {
         }
         return raw.split(separator: "/").last.map(String.init) ?? raw
     }
-
 }
 
 // MARK: - Keychain Helper

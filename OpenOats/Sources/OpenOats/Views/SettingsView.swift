@@ -172,6 +172,23 @@ struct SettingsView: View {
                 }
             }
 
+            Section("Reranking") {
+                Toggle("Use OpenAI-Compatible Reranker", isOn: $settings.openAIRerankEnabled)
+                    .font(.system(size: 12))
+                Text("Optional. Reorders top retrieval results through a chat-completions endpoint.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                if settings.openAIRerankEnabled {
+                    TextField("Rerank API URL", text: $settings.openAIRerankBaseURL, prompt: Text("https://api.openai.com"))
+                        .font(.system(size: 12, design: .monospaced))
+                    SecureField("Rerank API Key", text: $settings.openAIRerankApiKey)
+                        .font(.system(size: 12, design: .monospaced))
+                    TextField("Rerank Model", text: $settings.openAIRerankModel, prompt: Text("e.g. gpt-4o-mini"))
+                        .font(.system(size: 12, design: .monospaced))
+                }
+            }
+
             Section("Audio Input") {
                 Picker("Microphone", selection: $settings.inputDeviceID) {
                     Text("System Default").tag(AudioDeviceID(0))
@@ -266,7 +283,6 @@ struct SettingsView: View {
 
                 if isAddingTemplate {
                     VStack(alignment: .leading, spacing: 10) {
-                        // Name
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Name")
                                 .font(.system(size: 11, weight: .medium))
@@ -278,7 +294,6 @@ struct SettingsView: View {
                                 .focused($focusedTemplateField, equals: .name)
                         }
 
-                        // Icon picker
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Icon")
                                 .font(.system(size: 11, weight: .medium))
@@ -286,7 +301,6 @@ struct SettingsView: View {
                             IconPickerGrid(selected: $newTemplateIcon)
                         }
 
-                        // System prompt
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Notes Prompt")
                                 .font(.system(size: 11, weight: .medium))

@@ -18,198 +18,217 @@ struct ContentView: View {
     @State private var audioLevel: Float = 0
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Compact header
-            topBar
+        let topBarView = AnyView(topBar)
+        let postSessionBannerView = AnyView(postSessionBanner)
+        let suggestionsView = AnyView(suggestionsSection)
+        let transcriptView = AnyView(transcriptSection)
+        let controlBarView = AnyView(controlBarSection)
+        let rootLayout = ContentRootLayout(
+            topBar: topBarView,
+            postSessionBanner: postSessionBannerView,
+            suggestionsSection: suggestionsView,
+            transcriptSection: transcriptView,
+            controlBarSection: controlBarView
+        )
 
-            Divider()
-
-            // Post-session banner
-            if let lastSession = coordinator.lastEndedSession, lastSession.utteranceCount > 0 {
-                HStack {
-                    Text("Session ended \u{00B7} \(lastSession.utteranceCount) utterances")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button {
-                        openWindow(id: "notes")
-                    } label: {
-                        Label("Generate Notes", systemImage: "sparkles")
-                            .font(.system(size: 12))
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+        var view = AnyView(
+            rootLayout
+                .frame(minWidth: 360, maxWidth: 600, minHeight: 400)
                 .background(.ultraThinMaterial)
+        )
 
-                Divider()
-            }
-
-            // Main content: Suggestions
-            VStack(alignment: .leading, spacing: 0) {
-                sectionHeader("SUGGESTIONS")
-                SuggestionsView(
-                    suggestions: suggestionEngine?.suggestions ?? [],
-                    isGenerating: suggestionEngine?.isGenerating ?? false
-                )
-            }
-
-            Divider()
-
-            // Collapsible transcript
-            DisclosureGroup(isExpanded: $isTranscriptExpanded) {
-                TranscriptView(
-                    utterances: transcriptStore.utterances,
-                    volatileYouText: transcriptStore.volatileYouText,
-                    volatileThemText: transcriptStore.volatileThemText
-                )
-                .frame(height: 150)
-            } label: {
-                HStack(spacing: 6) {
-                    Text("Transcript")
-                        .font(.system(size: 12, weight: .medium))
-                    if !transcriptStore.utterances.isEmpty {
-                        Text("(\(transcriptStore.utterances.count))")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
-                    }
-                    Spacer()
-                    if isTranscriptExpanded && !transcriptStore.utterances.isEmpty {
-                        Button {
-                            copyTranscript()
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Copy transcript")
-                    }
+        view = AnyView(view.overlay {
+                overlayContent
+            })
+        view = AnyView(view.onChange(of: showOnboarding) {
+                if !showOnboarding {
+                    hasCompletedOnboarding = true
                 }
+            })
+        view = AnyView(view.onChange(of: showConsentSheet) {
+                // Auto-start session after consent is acknowledged
+                if !showConsentSheet && settings.hasAcknowledgedRecordingConsent && !isRunning {
+                    startSession()
+                }
+            })
+        view = AnyView(view.task {
+                if !hasCompletedOnboarding {
+                    showOnboarding = true
+                }
+                if knowledgeBase == nil {
+                    let kb = KnowledgeBase(settings: settings)
+                    knowledgeBase = kb
+                    transcriptionEngine = TranscriptionEngine(
+                        transcriptStore: transcriptStore,
+                        settings: settings
+                    )
+                    suggestionEngine = SuggestionEngine(
+                        transcriptStore: transcriptStore,
+                        knowledgeBase: kb,
+                        settings: settings
+                    )
+                    transcriptLogger = TranscriptLogger(
+                        directory: URL(fileURLWithPath: settings.notesFolderPath)
+                    )
+                }
+                indexKBIfNeeded()
+            })
+        view = AnyView(view.onChange(of: settings.kbFolderPath) {
+                if settings.knowledgeBaseBackend == .markdownFiles && settings.kbFolderPath.isEmpty {
+                    knowledgeBase?.clear()
+                } else {
+                    indexKBIfNeeded()
+                }
+            })
+        view = AnyView(view.onChange(of: settings.knowledgeBaseBackend) {
+                if settings.knowledgeBaseBackend == .markdownFiles && settings.kbFolderPath.isEmpty {
+                    knowledgeBase?.clear()
+                } else {
+                    indexKBIfNeeded()
+                }
+            })
+        view = AnyView(view.onChange(of: settings.notesFolderPath) {
+                Task {
+                    await transcriptLogger?.updateDirectory(
+                        URL(fileURLWithPath: settings.notesFolderPath)
+                    )
+                }
+            })
+        view = AnyView(view.onChange(of: settings.voyageApiKey) {
+                indexKBIfNeeded()
+            })
+        view = AnyView(view.onChange(of: settings.qdrantBaseURL) {
+                if settings.knowledgeBaseBackend == .qdrant { indexKBIfNeeded() }
+            })
+        view = AnyView(view.onChange(of: settings.qdrantCollection) {
+                if settings.knowledgeBaseBackend == .qdrant { indexKBIfNeeded() }
+            })
+        view = AnyView(view.onChange(of: settings.transcriptionModel) {
+                transcriptionEngine?.refreshModelAvailability()
+            })
+        view = AnyView(view.onChange(of: settings.inputDeviceID) {
+                if isRunning {
+                    transcriptionEngine?.restartMic(inputDeviceID: settings.inputDeviceID)
+                }
+            })
+        view = AnyView(view.onChange(of: transcriptStore.utterances.count) {
+                handleNewUtterance()
+            })
+        view = AnyView(view.onKeyPress(.escape) {
+                overlayManager.hide()
+                return .handled
+            })
+        view = AnyView(view.onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
+                guard let engine = transcriptionEngine else {
+                    if audioLevel != 0 { audioLevel = 0 }
+                    return
+                }
+                if engine.isRunning {
+                    audioLevel = engine.audioLevel
+                } else if audioLevel != 0 {
+                    audioLevel = 0
+                }
+            })
+
+        return view
+    }
+
+    @ViewBuilder
+    private var postSessionBanner: some View {
+        if let lastSession = coordinator.lastEndedSession, lastSession.utteranceCount > 0 {
+            HStack {
+                Text("Session ended \u{00B7} \(lastSession.utteranceCount) utterances")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    openWindow(id: "notes")
+                } label: {
+                    Label("Generate Notes", systemImage: "sparkles")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
 
             Divider()
+        }
+    }
 
-            // Bottom bar: live indicator + model
-            ControlBar(
-                isRunning: isRunning,
-                audioLevel: audioLevel,
-                modelDisplayName: settings.activeModelDisplay,
-                transcriptionPrompt: settings.transcriptionModel.downloadPrompt,
-                statusMessage: transcriptionEngine?.assetStatus,
-                errorMessage: transcriptionEngine?.lastError,
-                needsDownload: transcriptionEngine?.needsModelDownload ?? false,
-                onToggle: isRunning ? stopSession : startSession,
-                onConfirmDownload: confirmDownloadAndStart
+    private var suggestionsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionHeader("SUGGESTIONS")
+            SuggestionsView(
+                suggestions: suggestionEngine?.suggestions ?? [],
+                isGenerating: suggestionEngine?.isGenerating ?? false
             )
         }
-        .frame(minWidth: 360, maxWidth: 600, minHeight: 400)
-        .background(.ultraThinMaterial)
-        .overlay {
-            if showOnboarding {
-                OnboardingView(isPresented: $showOnboarding)
-                    .transition(.opacity)
+    }
+
+    private var transcriptSection: some View {
+        DisclosureGroup(isExpanded: $isTranscriptExpanded) {
+            TranscriptView(
+                utterances: transcriptStore.utterances,
+                volatileYouText: transcriptStore.volatileYouText,
+                volatileThemText: transcriptStore.volatileThemText
+            )
+            .frame(height: 150)
+        } label: {
+            HStack(spacing: 6) {
+                Text("Transcript")
+                    .font(.system(size: 12, weight: .medium))
+                if !transcriptStore.utterances.isEmpty {
+                    Text("(\(transcriptStore.utterances.count))")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                if isTranscriptExpanded && !transcriptStore.utterances.isEmpty {
+                    Button {
+                        copyTranscript()
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy transcript")
+                }
             }
-            if showConsentSheet {
-                RecordingConsentView(
-                    isPresented: $showConsentSheet,
-                    settings: settings
-                )
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private var controlBarSection: some View {
+        ControlBar(
+            isRunning: isRunning,
+            audioLevel: audioLevel,
+            modelDisplayName: settings.activeModelDisplay,
+            transcriptionPrompt: settings.transcriptionModel.downloadPrompt,
+            statusMessage: transcriptionEngine?.assetStatus,
+            errorMessage: transcriptionEngine?.lastError,
+            needsDownload: transcriptionEngine?.needsModelDownload ?? false,
+            onToggle: isRunning ? stopSession : startSession,
+            onConfirmDownload: confirmDownloadAndStart
+        )
+    }
+
+    @ViewBuilder
+    private var overlayContent: some View {
+        if showOnboarding {
+            OnboardingView(isPresented: $showOnboarding)
                 .transition(.opacity)
-            }
         }
-        .onChange(of: showOnboarding) {
-            if !showOnboarding {
-                hasCompletedOnboarding = true
-            }
-        }
-        .onChange(of: showConsentSheet) {
-            // Auto-start session after consent is acknowledged
-            if !showConsentSheet && settings.hasAcknowledgedRecordingConsent && !isRunning {
-                startSession()
-            }
-        }
-        .task {
-            if !hasCompletedOnboarding {
-                showOnboarding = true
-            }
-            if knowledgeBase == nil {
-                let kb = KnowledgeBase(settings: settings)
-                knowledgeBase = kb
-                transcriptionEngine = TranscriptionEngine(
-                    transcriptStore: transcriptStore,
-                    settings: settings
-                )
-                suggestionEngine = SuggestionEngine(
-                    transcriptStore: transcriptStore,
-                    knowledgeBase: kb,
-                    settings: settings
-                )
-                transcriptLogger = TranscriptLogger(
-                    directory: URL(fileURLWithPath: settings.notesFolderPath)
-                )
-            }
-            indexKBIfNeeded()
-        }
-        .onChange(of: settings.kbFolderPath) {
-            if settings.knowledgeBaseBackend == .markdownFiles && settings.kbFolderPath.isEmpty {
-                knowledgeBase?.clear()
-            } else {
-                indexKBIfNeeded()
-            }
-        }
-        .onChange(of: settings.knowledgeBaseBackend) {
-            if settings.knowledgeBaseBackend == .markdownFiles && settings.kbFolderPath.isEmpty {
-                knowledgeBase?.clear()
-            } else {
-                indexKBIfNeeded()
-            }
-        }
-        .onChange(of: settings.notesFolderPath) {
-            Task {
-                await transcriptLogger?.updateDirectory(
-                    URL(fileURLWithPath: settings.notesFolderPath)
-                )
-            }
-        }
-        .onChange(of: settings.voyageApiKey) {
-            indexKBIfNeeded()
-        }
-        .onChange(of: settings.qdrantBaseURL) {
-            if settings.knowledgeBaseBackend == .qdrant { indexKBIfNeeded() }
-        }
-        .onChange(of: settings.qdrantCollection) {
-            if settings.knowledgeBaseBackend == .qdrant { indexKBIfNeeded() }
-        }
-        .onChange(of: settings.transcriptionModel) {
-            transcriptionEngine?.refreshModelAvailability()
-        }
-        .onChange(of: settings.inputDeviceID) {
-            if isRunning {
-                transcriptionEngine?.restartMic(inputDeviceID: settings.inputDeviceID)
-            }
-        }
-        .onChange(of: transcriptStore.utterances.count) {
-            handleNewUtterance()
-        }
-        .onKeyPress(.escape) {
-            overlayManager.hide()
-            return .handled
-        }
-        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
-            guard let engine = transcriptionEngine else {
-                if audioLevel != 0 { audioLevel = 0 }
-                return
-            }
-            if engine.isRunning {
-                audioLevel = engine.audioLevel
-            } else if audioLevel != 0 {
-                audioLevel = 0
-            }
+        if showConsentSheet {
+            RecordingConsentView(
+                isPresented: $showConsentSheet,
+                settings: settings
+            )
+            .transition(.opacity)
         }
     }
 
@@ -217,71 +236,16 @@ struct ContentView: View {
 
     private var topBar: some View {
         VStack(spacing: 6) {
-            // Row 1: App name + KB folder
             HStack {
                 Text("OpenOats")
                     .font(.system(size: 13, weight: .semibold))
 
                 Spacer()
 
-                // KB status
-                if let kb = knowledgeBase {
-                    if !kb.indexingProgress.isEmpty {
-                        Text(kb.indexingProgress)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    } else if kb.isIndexed {
-                        HStack(spacing: 4) {
-                            Image(systemName: "folder")
-                                .font(.system(size: 10))
-                            Text("\(kb.fileCount) files")
-                                .font(.system(size: 11))
-                        }
-                        .foregroundStyle(.secondary)
-                    }
-                }
-
-                if settings.knowledgeBaseBackend == .qdrant {
-                    HStack(spacing: 4) {
-                        Image(systemName: "externaldrive.connected.to.line.below")
-                            .font(.system(size: 10))
-                        Text("Qdrant: \(settings.qdrantCollection.isEmpty ? "not set" : settings.qdrantCollection)")
-                            .font(.system(size: 11))
-                    }
-                    .foregroundStyle(.secondary)
-                } else {
-                    if settings.kbFolderPath.isEmpty {
-                        Button("Set KB Folder...") {
-                            chooseKBFolder()
-                        }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.accentTeal)
-                    } else {
-                        HStack(spacing: 4) {
-                            Button {
-                                NSWorkspace.shared.open(URL(fileURLWithPath: settings.kbFolderPath))
-                            } label: {
-                                Image(systemName: "folder")
-                                    .font(.system(size: 10))
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(.secondary)
-                            .help("Open in Finder")
-
-                            Button("Change...") {
-                                chooseKBFolder()
-                            }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Color.accentTeal)
-                        }
-                    }
-                }
+                kbStatusView
+                kbSourceView
             }
 
-            // Row 2: Template picker
             HStack {
                 @Bindable var coord = coordinator
                 Menu {
@@ -329,6 +293,65 @@ struct ContentView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private var kbStatusView: some View {
+        if let kb = knowledgeBase {
+            if !kb.indexingProgress.isEmpty {
+                Text(kb.indexingProgress)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            } else if kb.isIndexed && settings.knowledgeBaseBackend == .markdownFiles {
+                HStack(spacing: 4) {
+                    Image(systemName: "folder")
+                        .font(.system(size: 10))
+                    Text("\(kb.fileCount) files")
+                        .font(.system(size: 11))
+                }
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var kbSourceView: some View {
+        if settings.knowledgeBaseBackend == .qdrant {
+            HStack(spacing: 4) {
+                Image(systemName: "externaldrive.connected.to.line.below")
+                    .font(.system(size: 10))
+                Text("Qdrant: \(settings.qdrantCollection.isEmpty ? "not set" : settings.qdrantCollection)")
+                    .font(.system(size: 11))
+            }
+            .foregroundStyle(.secondary)
+        } else if settings.kbFolderPath.isEmpty {
+            Button("Set KB Folder...") {
+                chooseKBFolder()
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11))
+            .foregroundStyle(Color.accentTeal)
+        } else {
+            HStack(spacing: 4) {
+                Button {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: settings.kbFolderPath))
+                } label: {
+                    Image(systemName: "folder")
+                        .font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Open in Finder")
+
+                Button("Change...") {
+                    chooseKBFolder()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.accentTeal)
+            }
+        }
     }
 
     private var isRunning: Bool {
@@ -466,6 +489,27 @@ struct ContentView: View {
                     timestamp: last.timestamp
                 ))
             }
+        }
+    }
+}
+
+private struct ContentRootLayout: View {
+    let topBar: AnyView
+    let postSessionBanner: AnyView
+    let suggestionsSection: AnyView
+    let transcriptSection: AnyView
+    let controlBarSection: AnyView
+
+    var body: some View {
+        VStack(spacing: 0) {
+            topBar
+            Divider()
+            postSessionBanner
+            suggestionsSection
+            Divider()
+            transcriptSection
+            Divider()
+            controlBarSection
         }
     }
 }

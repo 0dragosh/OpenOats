@@ -17,7 +17,7 @@ private struct KBCache: Codable {
     var embeddingConfigFingerprint: String?
 }
 
-/// Embedding-based knowledge base search using Voyage AI or Ollama.
+/// Embedding-based knowledge base search using Voyage AI, Ollama, or Qdrant.
 @Observable
 @MainActor
 final class KnowledgeBase {
@@ -51,7 +51,6 @@ final class KnowledgeBase {
 
         let provider = settings.embeddingProvider
 
-        // Validate credentials based on provider
         if provider == .voyageAI {
             guard !settings.voyageApiKey.isEmpty else {
                 indexingProgress = "No Voyage AI API key"
@@ -67,7 +66,6 @@ final class KnowledgeBase {
             return
         }
 
-        // Load existing cache; invalidate if embedding config changed
         let fingerprint = embeddingConfigFingerprint()
         var cache = loadCache()
         if cache.embeddingConfigFingerprint != fingerprint {
@@ -85,7 +83,6 @@ final class KnowledgeBase {
             let hash = sha256(content)
             let cacheKey = "\(fileName):\(hash)"
 
-            // Reuse cached embeddings if content hasn't changed
             if let cached = cache.entries[cacheKey] {
                 allChunks.append(contentsOf: cached)
                 continue
@@ -95,7 +92,6 @@ final class KnowledgeBase {
             filesToEmbed.append((key: cacheKey, chunks: textChunks))
         }
 
-        // Embed new/changed files in batches
         if !filesToEmbed.isEmpty {
             let allTextsToEmbed = filesToEmbed.flatMap { entry in
                 entry.chunks.map { "\($0.header)\n\($0.text)" }
@@ -129,23 +125,18 @@ final class KnowledgeBase {
                     allChunks.append(contentsOf: fileChunks)
                 }
 
-                // Remove stale cache entries (files that no longer exist)
                 let currentKeys = Set(
                     fileURLs.compactMap { url -> String? in
                         guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
                         return "\(url.lastPathComponent):\(sha256(content))"
                     }
                 )
-                // Also keep keys for files that were cached and reused
-                let allRelevantKeys = Set(filesToEmbed.map(\.key)).union(
-                    currentKeys
-                )
+                let allRelevantKeys = Set(filesToEmbed.map(\.key)).union(currentKeys)
                 cache.entries = cache.entries.filter { allRelevantKeys.contains($0.key) }
 
                 saveCache(cache)
             }
         } else {
-            // All files were cached — still prune stale entries
             let currentKeys = Set(
                 fileURLs.compactMap { url -> String? in
                     guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
@@ -173,7 +164,6 @@ final class KnowledgeBase {
         let provider = settings.embeddingProvider
         guard isIndexed else { return [] }
 
-        // Validate credentials for the active provider
         if provider == .voyageAI {
             guard !settings.voyageApiKey.isEmpty else { return [] }
         }
@@ -181,7 +171,6 @@ final class KnowledgeBase {
         let validQueries = queries.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard !validQueries.isEmpty else { return [] }
 
-        // Embed all queries at once
         let queryEmbeddings: [[Float]]
         do {
             queryEmbeddings = try await embedTexts(validQueries, inputType: "query")
@@ -286,7 +275,7 @@ final class KnowledgeBase {
         let lines = text.components(separatedBy: .newlines)
 
         struct Section {
-            var headers: [String] // hierarchy stack
+            var headers: [String]
             var lines: [String]
         }
 
@@ -295,17 +284,14 @@ final class KnowledgeBase {
 
         for line in lines {
             if line.hasPrefix("#") {
-                // Flush current section
                 if !current.lines.isEmpty {
                     sections.append(current)
                 }
 
-                // Parse header level
                 let trimmed = line.drop(while: { $0 == "#" })
                 let level = line.count - trimmed.count
                 let headerText = String(trimmed).trimmingCharacters(in: .whitespaces)
 
-                // Build header stack: keep headers at higher levels, replace at current
                 var newHeaders = current.headers
                 if level <= newHeaders.count {
                     newHeaders = Array(newHeaders.prefix(level - 1))
@@ -321,7 +307,6 @@ final class KnowledgeBase {
             sections.append(current)
         }
 
-        // Merge small sections and split large ones
         var result: [(text: String, header: String)] = []
         let targetMin = 80
         let targetMax = 500
@@ -337,17 +322,14 @@ final class KnowledgeBase {
             let wordCount = sectionText.split(separator: " ").count
 
             if wordCount < targetMin {
-                // Merge with pending
                 if pendingText.isEmpty {
                     pendingText = sectionText
                     pendingHeader = breadcrumb
                 } else {
                     pendingText += "\n\n" + sectionText
-                    // Keep the more specific header
                     if !breadcrumb.isEmpty { pendingHeader = breadcrumb }
                 }
 
-                // Flush if pending is now large enough
                 let pendingWords = pendingText.split(separator: " ").count
                 if pendingWords >= targetMin {
                     result.append((text: pendingText, header: pendingHeader))
@@ -355,14 +337,12 @@ final class KnowledgeBase {
                     pendingHeader = ""
                 }
             } else if wordCount > targetMax {
-                // Flush pending first
                 if !pendingText.isEmpty {
                     result.append((text: pendingText, header: pendingHeader))
                     pendingText = ""
                     pendingHeader = ""
                 }
 
-                // Split large section with overlap
                 let words = sectionText.split(separator: " ", omittingEmptySubsequences: true)
                 let overlap = targetMax / 5
                 var start = 0
@@ -373,7 +353,6 @@ final class KnowledgeBase {
                     start += targetMax - overlap
                 }
             } else {
-                // Flush pending first
                 if !pendingText.isEmpty {
                     result.append((text: pendingText, header: pendingHeader))
                     pendingText = ""
@@ -383,12 +362,10 @@ final class KnowledgeBase {
             }
         }
 
-        // Flush remaining
         if !pendingText.isEmpty {
             result.append((text: pendingText, header: pendingHeader))
         }
 
-        // If no chunks were produced (e.g. no headers, short doc), chunk the whole text
         if result.isEmpty && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let words = text.split(separator: " ", omittingEmptySubsequences: true)
             if words.count <= targetMax {
@@ -410,8 +387,6 @@ final class KnowledgeBase {
 
     // MARK: - Embedding Config Fingerprint
 
-    /// Returns a string that uniquely identifies the current embedding configuration.
-    /// Any change (provider, model, URL) produces a different fingerprint, invalidating the cache.
     private func embeddingConfigFingerprint() -> String {
         let backend = settings.knowledgeBaseBackend.rawValue
         switch settings.embeddingProvider {
@@ -420,7 +395,7 @@ final class KnowledgeBase {
         case .ollama:
             return "\(backend)|ollama|\(settings.ollamaBaseURL)|\(settings.ollamaEmbedModel)"
         case .openAICompatible:
-            return "\(backend)|openAI|\(settings.customOpenAIBaseURL)|\(settings.customOpenAIEmbeddingModel)"
+            return "\(backend)|openAI|\(settings.openAIEmbedBaseURL)|\(settings.openAIEmbedModel)"
         }
     }
 
@@ -435,7 +410,7 @@ final class KnowledgeBase {
             return
         }
         chunks = []
-        fileCount = 1
+        fileCount = 0
         isIndexed = true
         indexingProgress = ""
     }
@@ -497,7 +472,6 @@ final class KnowledgeBase {
 
     // MARK: - Embedding Dispatch
 
-    /// Embeds texts using the currently configured provider.
     private func embedTexts(_ texts: [String], inputType: String) async throws -> [[Float]] {
         switch settings.embeddingProvider {
         case .voyageAI:
