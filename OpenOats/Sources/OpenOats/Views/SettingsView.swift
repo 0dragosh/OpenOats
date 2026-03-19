@@ -34,29 +34,45 @@ struct SettingsView: View {
             }
 
             Section("Knowledge Base") {
-                Text("Optional. Point this to a folder of notes, docs, or reference material (.md, .txt). During meetings, OpenOats searches this folder to surface relevant context and talking points.")
+                Text("Optional. Use local Markdown/TXT files or connect to a Qdrant vector database for retrieval.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
 
-                HStack {
-                    Text(settings.kbFolderPath.isEmpty ? "Not set" : settings.kbFolderPath)
-                        .font(.system(size: 12))
-                        .foregroundStyle(settings.kbFolderPath.isEmpty ? .tertiary : .primary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                Picker("Backend", selection: $settings.knowledgeBaseBackend) {
+                    ForEach(KnowledgeBaseBackend.allCases) { backend in
+                        Text(backend.displayName).tag(backend)
+                    }
+                }
+                .font(.system(size: 12))
 
-                    Spacer()
+                if settings.knowledgeBaseBackend == .markdownFiles {
+                    HStack {
+                        Text(settings.kbFolderPath.isEmpty ? "Not set" : settings.kbFolderPath)
+                            .font(.system(size: 12))
+                            .foregroundStyle(settings.kbFolderPath.isEmpty ? .tertiary : .primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
 
-                    if !settings.kbFolderPath.isEmpty {
-                        Button("Clear") {
-                            settings.kbFolderPath = ""
+                        Spacer()
+
+                        if !settings.kbFolderPath.isEmpty {
+                            Button("Clear") {
+                                settings.kbFolderPath = ""
+                            }
+                            .font(.system(size: 12))
                         }
-                        .font(.system(size: 12))
-                    }
 
-                    Button("Choose...") {
-                        chooseKBFolder()
+                        Button("Choose...") {
+                            chooseKBFolder()
+                        }
                     }
+                } else {
+                    TextField("Qdrant URL", text: $settings.qdrantBaseURL, prompt: Text("http://localhost:6333"))
+                        .font(.system(size: 12, design: .monospaced))
+                    TextField("Collection", text: $settings.qdrantCollection, prompt: Text("e.g. meeting_kb"))
+                        .font(.system(size: 12, design: .monospaced))
+                    SecureField("Qdrant API Key (optional)", text: $settings.qdrantApiKey)
+                        .font(.system(size: 12, design: .monospaced))
                 }
             }
 
@@ -93,6 +109,10 @@ struct SettingsView: View {
             }
 
             Section("Embedding Provider") {
+                Text("Used to embed queries (and local documents when using file-based KB).")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
                 Picker("Provider", selection: $settings.embeddingProvider) {
                     ForEach(EmbeddingProvider.allCases) { provider in
                         Text(provider.displayName).tag(provider)
@@ -126,6 +146,23 @@ struct SettingsView: View {
                     }
 
                     TextField("Embedding Model", text: $settings.customOpenAIEmbeddingModel, prompt: Text("e.g. text-embedding-3-small"))
+                        .font(.system(size: 12, design: .monospaced))
+                }
+            }
+
+            Section("Reranking") {
+                Toggle("Use OpenAI-Compatible Reranker", isOn: $settings.openAIRerankEnabled)
+                    .font(.system(size: 12))
+                Text("Optional. Reorders top retrieval results through a chat-completions endpoint.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+
+                if settings.openAIRerankEnabled {
+                    TextField("Rerank API URL", text: $settings.openAIRerankBaseURL, prompt: Text("https://api.openai.com"))
+                        .font(.system(size: 12, design: .monospaced))
+                    SecureField("Rerank API Key", text: $settings.openAIRerankApiKey)
+                        .font(.system(size: 12, design: .monospaced))
+                    TextField("Rerank Model", text: $settings.openAIRerankModel, prompt: Text("e.g. gpt-4o-mini"))
                         .font(.system(size: 12, design: .monospaced))
                 }
             }
