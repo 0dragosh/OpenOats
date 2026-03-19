@@ -43,7 +43,10 @@ final class TranscriptionEngine {
     private var micKeepAliveTask: Task<Void, Never>?
 
     /// Shared FluidAudio instances
-    private var asrManager: AsrManager?
+    // Parakeet keeps mutable decoder state per manager, so mic and system audio
+    // need separate instances even when they share the same loaded model files.
+    private var micAsrManager: AsrManager?
+    private var systemAsrManager: AsrManager?
     private var qwen3Manager: Qwen3AsrManager?
     private var openAITranscriptionClient: OpenAITranscriptionClient?
     private var vadManager: VadManager?
@@ -80,6 +83,15 @@ final class TranscriptionEngine {
         lastError = nil
         refreshModelAvailability()
 
+        if let localeMismatchMessage = localeMismatchMessage(
+            for: locale,
+            transcriptionModel: transcriptionModel
+        ) {
+            lastError = localeMismatchMessage
+            assetStatus = "Ready"
+            return
+        }
+
         // Block start if models need downloading and user hasn't confirmed
         if needsModelDownload && !downloadConfirmed {
             return
@@ -110,29 +122,39 @@ final class TranscriptionEngine {
             case .parakeetV2:
                 let models = try await AsrModels.downloadAndLoad(version: .v2)
                 assetStatus = "Initializing \(transcriptionModel.displayName)..."
-                let asr = AsrManager(config: .default)
-                try await asr.initialize(models: models)
-                self.asrManager = asr
+                let micAsr = AsrManager(config: .default)
+                try await micAsr.initialize(models: models)
+                let systemAsr = AsrManager(config: .default)
+                try await systemAsr.initialize(models: models)
+                self.micAsrManager = micAsr
+                self.systemAsrManager = systemAsr
                 self.qwen3Manager = nil
+                self.openAITranscriptionClient = nil
             case .parakeetV3:
                 let models = try await AsrModels.downloadAndLoad(version: .v3)
                 assetStatus = "Initializing \(transcriptionModel.displayName)..."
-                let asr = AsrManager(config: .default)
-                try await asr.initialize(models: models)
-                self.asrManager = asr
+                let micAsr = AsrManager(config: .default)
+                try await micAsr.initialize(models: models)
+                let systemAsr = AsrManager(config: .default)
+                try await systemAsr.initialize(models: models)
+                self.micAsrManager = micAsr
+                self.systemAsrManager = systemAsr
                 self.qwen3Manager = nil
+                self.openAITranscriptionClient = nil
             case .qwen3ASR06B:
                 assetStatus = "Initializing \(transcriptionModel.displayName)..."
                 let modelsDirectory = try await Qwen3AsrModels.download()
                 let qwen3 = Qwen3AsrManager()
                 try await qwen3.loadModels(from: modelsDirectory)
                 self.qwen3Manager = qwen3
-                self.asrManager = nil
+                self.micAsrManager = nil
+                self.systemAsrManager = nil
                 self.openAITranscriptionClient = nil
             case .customOpenAISTT:
                 assetStatus = "Initializing \(transcriptionModel.displayName)..."
                 self.openAITranscriptionClient = OpenAITranscriptionClient()
-                self.asrManager = nil
+                self.micAsrManager = nil
+                self.systemAsrManager = nil
                 self.qwen3Manager = nil
             }
 
@@ -436,6 +458,7 @@ final class TranscriptionEngine {
     ) -> StreamingTranscriber {
         switch currentTranscriptionModel ?? settings.transcriptionModel {
         case .parakeetV2, .parakeetV3:
+            let asrManager = speaker == .you ? micAsrManager : systemAsrManager
             guard let asrManager else {
                 fatalError("Parakeet transcription requested without an initialized AsrManager")
             }
@@ -513,9 +536,28 @@ final class TranscriptionEngine {
         }
     }
 
-    private func qwen3Language(for locale: Locale) -> Qwen3AsrConfig.Language? {
+    private func localeMismatchMessage(
+        for locale: Locale,
+        transcriptionModel: TranscriptionModel
+    ) -> String? {
+        guard transcriptionModel == .parakeetV2,
+              let languageCode = normalizedLanguageCode(for: locale),
+              languageCode != "en"
+        else {
+            return nil
+        }
+
+        let localeIdentifier = locale.identifier.replacingOccurrences(of: "_", with: "-")
+        return "Parakeet TDT v2 is English-only. Switch to Parakeet TDT v3 or Qwen3 ASR for \(localeIdentifier)."
+    }
+
+    private func normalizedLanguageCode(for locale: Locale) -> String? {
         let identifier = locale.identifier.replacingOccurrences(of: "_", with: "-")
-        let languageCode = identifier.split(separator: "-").first.map(String.init)
+        return identifier.split(separator: "-").first.map { String($0).lowercased() }
+    }
+
+    private func qwen3Language(for locale: Locale) -> Qwen3AsrConfig.Language? {
+        let languageCode = normalizedLanguageCode(for: locale)
         guard let languageCode else { return nil }
         return Qwen3AsrConfig.Language(from: languageCode)
     }

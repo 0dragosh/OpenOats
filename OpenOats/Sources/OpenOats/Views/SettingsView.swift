@@ -3,6 +3,10 @@ import CoreAudio
 import Sparkle
 
 struct SettingsView: View {
+    private enum TemplateField: Hashable {
+        case name
+    }
+
     @Bindable var settings: AppSettings
     var updater: SPUUpdater
     @Environment(AppCoordinator.self) private var coordinator
@@ -11,6 +15,7 @@ struct SettingsView: View {
     @State private var newTemplateName = ""
     @State private var newTemplateIcon = "doc.text"
     @State private var newTemplatePrompt = ""
+    @FocusState private var focusedTemplateField: TemplateField?
 
     var body: some View {
         Form {
@@ -148,8 +153,18 @@ struct SettingsView: View {
                 }
                 .font(.system(size: 12))
 
-                TextField("Locale (e.g. en-US)", text: $settings.transcriptionLocale)
+                if settings.transcriptionModel.supportsExplicitLanguageHint {
+                    TextField(
+                        "\(settings.transcriptionModel.localeFieldTitle) (e.g. en-US)",
+                        text: $settings.transcriptionLocale
+                    )
                     .font(.system(size: 12, design: .monospaced))
+                }
+
+                Text(settings.transcriptionModel.localeHelpText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 if settings.transcriptionModel == .customOpenAISTT {
                     if settings.llmProvider != .customOpenAI && settings.embeddingProvider != .openAICompatible {
@@ -221,6 +236,9 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                             TextField("e.g. Sprint Planning", text: $newTemplateName)
                                 .font(.system(size: 12))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: .infinity)
+                                .focused($focusedTemplateField, equals: .name)
                         }
 
                         // Icon picker
@@ -251,6 +269,7 @@ struct SettingsView: View {
                                 TextEditor(text: $newTemplatePrompt)
                                     .font(.system(size: 11, design: .monospaced))
                                     .frame(height: 100)
+                                    .frame(maxWidth: .infinity)
                                     .scrollContentBackground(.hidden)
                             }
                             .overlay(
@@ -261,39 +280,36 @@ struct SettingsView: View {
 
                         HStack {
                             Button("Cancel") {
-                                isAddingTemplate = false
-                                newTemplateName = ""
-                                newTemplateIcon = "doc.text"
-                                newTemplatePrompt = ""
+                                resetNewTemplateForm()
                             }
                             .buttonStyle(.plain)
                             Button("Save") {
                                 let template = MeetingTemplate(
                                     id: UUID(),
-                                    name: newTemplateName,
+                                    name: trimmedTemplateName,
                                     icon: newTemplateIcon,
-                                    systemPrompt: newTemplatePrompt,
+                                    systemPrompt: trimmedTemplatePrompt,
                                     isBuiltIn: false
                                 )
                                 coordinator.templateStore.add(template)
-                                isAddingTemplate = false
-                                newTemplateName = ""
-                                newTemplateIcon = "doc.text"
-                                newTemplatePrompt = ""
+                                resetNewTemplateForm()
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(newTemplateName.isEmpty || newTemplatePrompt.isEmpty)
+                            .disabled(!canSaveNewTemplate)
                         }
                     }
                     .padding(.vertical, 4)
                 } else {
                     Button("New Template") {
                         isAddingTemplate = true
+                        Task { @MainActor in
+                            focusedTemplateField = .name
+                        }
                     }
                     .font(.system(size: 12))
                 }
             }
-}
+        }
         .formStyle(.grouped)
         .frame(width: 450, height: 700)
         .onAppear {
@@ -323,6 +339,26 @@ struct SettingsView: View {
         if panel.runModal() == .OK, let url = panel.url {
             settings.notesFolderPath = url.path
         }
+    }
+
+    private var trimmedTemplateName: String {
+        newTemplateName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedTemplatePrompt: String {
+        newTemplatePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canSaveNewTemplate: Bool {
+        !trimmedTemplateName.isEmpty && !trimmedTemplatePrompt.isEmpty
+    }
+
+    private func resetNewTemplateForm() {
+        isAddingTemplate = false
+        newTemplateName = ""
+        newTemplateIcon = "doc.text"
+        newTemplatePrompt = ""
+        focusedTemplateField = nil
     }
 }
 
