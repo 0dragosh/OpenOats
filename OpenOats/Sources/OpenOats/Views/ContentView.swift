@@ -5,6 +5,7 @@ struct ContentView: View {
     @Bindable var settings: AppSettings
     @Environment(AppCoordinator.self) private var coordinator
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     @State private var transcriptStore = TranscriptStore()
     @State private var knowledgeBase: KnowledgeBase?
     @State private var transcriptionEngine: TranscriptionEngine?
@@ -244,6 +245,16 @@ struct ContentView: View {
 
                 kbStatusView
                 kbSourceView
+
+                Button {
+                    openSettings()
+                } label: {
+                    Image(systemName: "gear")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Settings")
             }
 
             HStack {
