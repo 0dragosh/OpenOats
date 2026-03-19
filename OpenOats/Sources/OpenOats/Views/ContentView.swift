@@ -156,7 +156,14 @@ struct ContentView: View {
             indexKBIfNeeded()
         }
         .onChange(of: settings.kbFolderPath) {
-            if settings.kbFolderPath.isEmpty {
+            if settings.knowledgeBaseBackend == .markdownFiles && settings.kbFolderPath.isEmpty {
+                knowledgeBase?.clear()
+            } else {
+                indexKBIfNeeded()
+            }
+        }
+        .onChange(of: settings.knowledgeBaseBackend) {
+            if settings.knowledgeBaseBackend == .markdownFiles && settings.kbFolderPath.isEmpty {
                 knowledgeBase?.clear()
             } else {
                 indexKBIfNeeded()
@@ -171,6 +178,12 @@ struct ContentView: View {
         }
         .onChange(of: settings.voyageApiKey) {
             indexKBIfNeeded()
+        }
+        .onChange(of: settings.qdrantBaseURL) {
+            if settings.knowledgeBaseBackend == .qdrant { indexKBIfNeeded() }
+        }
+        .onChange(of: settings.qdrantCollection) {
+            if settings.knowledgeBaseBackend == .qdrant { indexKBIfNeeded() }
         }
         .onChange(of: settings.transcriptionModel) {
             transcriptionEngine?.refreshModelAvailability()
@@ -229,31 +242,41 @@ struct ContentView: View {
                     }
                 }
 
-                if settings.kbFolderPath.isEmpty {
-                    Button("Set KB Folder...") {
-                        chooseKBFolder()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color.accentTeal)
-                } else {
+                if settings.knowledgeBaseBackend == .qdrant {
                     HStack(spacing: 4) {
-                        Button {
-                            NSWorkspace.shared.open(URL(fileURLWithPath: settings.kbFolderPath))
-                        } label: {
-                            Image(systemName: "folder")
-                                .font(.system(size: 10))
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .help("Open in Finder")
-
-                        Button("Change...") {
+                        Image(systemName: "externaldrive.connected.to.line.below")
+                            .font(.system(size: 10))
+                        Text("Qdrant: \(settings.qdrantCollection.isEmpty ? "not set" : settings.qdrantCollection)")
+                            .font(.system(size: 11))
+                    }
+                    .foregroundStyle(.secondary)
+                } else {
+                    if settings.kbFolderPath.isEmpty {
+                        Button("Set KB Folder...") {
                             chooseKBFolder()
                         }
                         .buttonStyle(.plain)
                         .font(.system(size: 11))
                         .foregroundStyle(Color.accentTeal)
+                    } else {
+                        HStack(spacing: 4) {
+                            Button {
+                                NSWorkspace.shared.open(URL(fileURLWithPath: settings.kbFolderPath))
+                            } label: {
+                                Image(systemName: "folder")
+                                    .font(.system(size: 10))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .help("Open in Finder")
+
+                            Button("Change...") {
+                                chooseKBFolder()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.accentTeal)
+                        }
                     }
                 }
             }
@@ -382,9 +405,14 @@ struct ContentView: View {
     }
 
     private func indexKBIfNeeded() {
-        guard let url = settings.kbFolderURL, let kb = knowledgeBase else { return }
+        guard let kb = knowledgeBase else { return }
         Task {
             kb.clear()
+            if settings.knowledgeBaseBackend == .qdrant {
+                await kb.index(folderURL: URL(fileURLWithPath: "/"))
+                return
+            }
+            guard let url = settings.kbFolderURL else { return }
             await kb.index(folderURL: url)
         }
     }

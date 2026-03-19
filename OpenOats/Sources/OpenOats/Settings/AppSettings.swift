@@ -96,6 +96,20 @@ enum EmbeddingProvider: String, CaseIterable, Identifiable {
     }
 }
 
+enum KnowledgeBaseBackend: String, CaseIterable, Identifiable {
+    case markdownFiles
+    case qdrant
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .markdownFiles: "Markdown/TXT Folder"
+        case .qdrant: "Qdrant Vector DB"
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class AppSettings {
@@ -158,6 +172,38 @@ final class AppSettings {
 
     var embeddingProvider: EmbeddingProvider {
         didSet { UserDefaults.standard.set(embeddingProvider.rawValue, forKey: "embeddingProvider") }
+    }
+
+    var knowledgeBaseBackend: KnowledgeBaseBackend {
+        didSet { UserDefaults.standard.set(knowledgeBaseBackend.rawValue, forKey: "knowledgeBaseBackend") }
+    }
+
+    var qdrantBaseURL: String {
+        didSet { UserDefaults.standard.set(qdrantBaseURL, forKey: "qdrantBaseURL") }
+    }
+
+    var qdrantCollection: String {
+        didSet { UserDefaults.standard.set(qdrantCollection, forKey: "qdrantCollection") }
+    }
+
+    var qdrantApiKey: String {
+        didSet { KeychainHelper.save(key: "qdrantApiKey", value: qdrantApiKey) }
+    }
+
+    var openAIRerankEnabled: Bool {
+        didSet { UserDefaults.standard.set(openAIRerankEnabled, forKey: "openAIRerankEnabled") }
+    }
+
+    var openAIRerankBaseURL: String {
+        didSet { UserDefaults.standard.set(openAIRerankBaseURL, forKey: "openAIRerankBaseURL") }
+    }
+
+    var openAIRerankApiKey: String {
+        didSet { KeychainHelper.save(key: "openAIRerankApiKey", value: openAIRerankApiKey) }
+    }
+
+    var openAIRerankModel: String {
+        didSet { UserDefaults.standard.set(openAIRerankModel, forKey: "openAIRerankModel") }
     }
 
     var ollamaBaseURL: String {
@@ -227,6 +273,18 @@ final class AppSettings {
         self.voyageApiKey = KeychainHelper.load(key: "voyageApiKey") ?? ""
         self.llmProvider = LLMProvider(rawValue: defaults.string(forKey: "llmProvider") ?? "") ?? .openRouter
         self.embeddingProvider = EmbeddingProvider(rawValue: defaults.string(forKey: "embeddingProvider") ?? "") ?? .voyageAI
+        self.knowledgeBaseBackend = KnowledgeBaseBackend(
+            rawValue: defaults.string(forKey: "knowledgeBaseBackend") ?? ""
+        ) ?? .markdownFiles
+        self.qdrantBaseURL = defaults.string(forKey: "qdrantBaseURL") ?? "http://localhost:6333"
+        self.qdrantCollection = defaults.string(forKey: "qdrantCollection") ?? ""
+        self.qdrantApiKey = KeychainHelper.load(key: "qdrantApiKey") ?? ""
+        self.openAIRerankEnabled = defaults.object(forKey: "openAIRerankEnabled") == nil
+            ? false
+            : defaults.bool(forKey: "openAIRerankEnabled")
+        self.openAIRerankBaseURL = defaults.string(forKey: "openAIRerankBaseURL") ?? self.customOpenAIBaseURL
+        self.openAIRerankApiKey = KeychainHelper.load(key: "openAIRerankApiKey") ?? self.customOpenAIApiKey
+        self.openAIRerankModel = defaults.string(forKey: "openAIRerankModel") ?? "gpt-4o-mini"
         self.ollamaBaseURL = defaults.string(forKey: "ollamaBaseURL") ?? "http://localhost:11434"
         self.ollamaLLMModel = defaults.string(forKey: "ollamaLLMModel") ?? "qwen3:8b"
         self.ollamaEmbedModel = defaults.string(forKey: "ollamaEmbedModel") ?? "nomic-embed-text"

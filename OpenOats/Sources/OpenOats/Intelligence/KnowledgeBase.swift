@@ -29,6 +29,8 @@ final class KnowledgeBase {
     private let settings: AppSettings
     private let voyageClient = VoyageClient()
     private let ollamaEmbedClient = OllamaEmbedClient()
+    private let qdrantClient = QdrantClient()
+    private let openAIRerankClient = OpenAIRerankClient()
 
     private nonisolated static func cacheURL() -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -42,6 +44,11 @@ final class KnowledgeBase {
     }
 
     func index(folderURL: URL) async {
+        if settings.knowledgeBaseBackend == .qdrant {
+            await configureQdrantBackend()
+            return
+        }
+
         let provider = settings.embeddingProvider
 
         // Validate credentials based on provider
@@ -164,7 +171,7 @@ final class KnowledgeBase {
     /// Multi-query search with score fusion. Deduplicates by chunk index, uses max score.
     func search(queries: [String], topK: Int = 5) async -> [KBResult] {
         let provider = settings.embeddingProvider
-        guard isIndexed, !chunks.isEmpty else { return [] }
+        guard isIndexed else { return [] }
 
         // Validate credentials for the active provider
         if provider == .voyageAI {
@@ -183,6 +190,39 @@ final class KnowledgeBase {
             return []
         }
 
+        // Qdrant-backed retrieval path
+        if settings.knowledgeBaseBackend == .qdrant {
+            guard !settings.qdrantCollection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+            var merged: [String: KBResult] = [:]
+            for queryEmbedding in queryEmbeddings {
+                do {
+                    let fetched = try await qdrantClient.search(
+                        baseURL: settings.qdrantBaseURL,
+                        collection: settings.qdrantCollection,
+                        apiKey: settings.qdrantApiKey,
+                        vector: queryEmbedding,
+                        limit: max(10, topK * 2)
+                    )
+                    for result in fetched {
+                        let key = "\(result.sourceFile)|\(result.headerContext)|\(result.text.prefix(120))"
+                        if let existing = merged[key] {
+                            if result.score > existing.score {
+                                merged[key] = result
+                            }
+                        } else {
+                            merged[key] = result
+                        }
+                    }
+                } catch {
+                    print("Qdrant search error: \(error)")
+                }
+            }
+            let ranked = merged.values.sorted { $0.score > $1.score }
+            return await rerankIfEnabled(query: validQueries[0], candidates: Array(ranked.prefix(max(10, topK * 2))), topK: topK)
+        }
+
+        guard !chunks.isEmpty else { return [] }
+
         // Score fusion: for each chunk, take max cosine similarity across all queries
         var bestScores: [Int: Float] = [:]
         for queryEmb in queryEmbeddings {
@@ -200,33 +240,7 @@ final class KnowledgeBase {
 
         guard !topCandidates.isEmpty else { return [] }
 
-        // Rerank with Voyage (only when using Voyage AI provider)
-        if provider == .voyageAI {
-            let candidateDocs = topCandidates.map { chunks[$0.index].text }
-            do {
-                let reranked = try await voyageClient.rerank(
-                    apiKey: settings.voyageApiKey,
-                    query: validQueries[0],
-                    documents: candidateDocs,
-                    topN: topK
-                )
-                return reranked.map { result in
-                    let originalIdx = topCandidates[result.index].index
-                    let chunk = chunks[originalIdx]
-                    return KBResult(
-                        text: chunk.text,
-                        sourceFile: chunk.sourceFile,
-                        headerContext: chunk.headerContext,
-                        score: result.score
-                    )
-                }
-            } catch {
-                print("KB rerank error (falling back to cosine): \(error)")
-            }
-        }
-
-        // Cosine-similarity fallback (used by Ollama or when Voyage rerank fails)
-        return topCandidates.prefix(topK).map { candidate in
+        let cosineResults = topCandidates.prefix(max(10, topK * 2)).map { candidate in
             let chunk = chunks[candidate.index]
             return KBResult(
                 text: chunk.text,
@@ -235,6 +249,7 @@ final class KnowledgeBase {
                 score: Double(candidate.score)
             )
         }
+        return await rerankIfEnabled(query: validQueries[0], candidates: cosineResults, topK: topK)
     }
 
     func clear() {
@@ -398,14 +413,86 @@ final class KnowledgeBase {
     /// Returns a string that uniquely identifies the current embedding configuration.
     /// Any change (provider, model, URL) produces a different fingerprint, invalidating the cache.
     private func embeddingConfigFingerprint() -> String {
+        let backend = settings.knowledgeBaseBackend.rawValue
         switch settings.embeddingProvider {
         case .voyageAI:
-            return "voyageAI"
+            return "\(backend)|voyageAI"
         case .ollama:
-            return "ollama|\(settings.ollamaBaseURL)|\(settings.ollamaEmbedModel)"
+            return "\(backend)|ollama|\(settings.ollamaBaseURL)|\(settings.ollamaEmbedModel)"
         case .openAICompatible:
-            return "openAI|\(settings.customOpenAIBaseURL)|\(settings.customOpenAIEmbeddingModel)"
+            return "\(backend)|openAI|\(settings.customOpenAIBaseURL)|\(settings.customOpenAIEmbeddingModel)"
         }
+    }
+
+    // MARK: - Backend / Rerank
+
+    private func configureQdrantBackend() async {
+        let collection = settings.qdrantCollection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !collection.isEmpty else {
+            indexingProgress = "Set a Qdrant collection"
+            isIndexed = false
+            fileCount = 0
+            return
+        }
+        chunks = []
+        fileCount = 1
+        isIndexed = true
+        indexingProgress = ""
+    }
+
+    private func rerankIfEnabled(query: String, candidates: [KBResult], topK: Int) async -> [KBResult] {
+        guard !candidates.isEmpty else { return [] }
+
+        // Preferred reranker: OpenAI-compatible chat endpoint
+        if settings.openAIRerankEnabled {
+            let apiKey = settings.openAIRerankApiKey.isEmpty ? settings.customOpenAIApiKey : settings.openAIRerankApiKey
+            do {
+                let reranked = try await openAIRerankClient.rerank(
+                    baseURL: settings.openAIRerankBaseURL,
+                    apiKey: apiKey,
+                    model: settings.openAIRerankModel,
+                    query: query,
+                    documents: candidates.map(\.text),
+                    topN: topK
+                )
+                return reranked.map { item in
+                    let base = candidates[item.index]
+                    return KBResult(
+                        text: base.text,
+                        sourceFile: base.sourceFile,
+                        headerContext: base.headerContext,
+                        score: item.score
+                    )
+                }
+            } catch {
+                print("OpenAI rerank error (falling back): \(error)")
+            }
+        }
+
+        // Legacy Voyage rerank fallback when using Voyage embeddings.
+        if settings.embeddingProvider == .voyageAI {
+            do {
+                let reranked = try await voyageClient.rerank(
+                    apiKey: settings.voyageApiKey,
+                    query: query,
+                    documents: candidates.map(\.text),
+                    topN: topK
+                )
+                return reranked.map { item in
+                    let base = candidates[item.index]
+                    return KBResult(
+                        text: base.text,
+                        sourceFile: base.sourceFile,
+                        headerContext: base.headerContext,
+                        score: item.score
+                    )
+                }
+            } catch {
+                print("Voyage rerank error (falling back): \(error)")
+            }
+        }
+
+        return Array(candidates.prefix(topK))
     }
 
     // MARK: - Embedding Dispatch
